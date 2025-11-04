@@ -1,247 +1,242 @@
 #include <srl.hpp>
+#include <srl_log.hpp>      // Logging system
+
+#include <cassert>
 
 // Using to shorten names for Vector and HighColor
 using namespace SRL::Types;
 using namespace SRL::Math::Types;
+using namespace SRL::Logger;
 
-/** @brief Simple canvas
+// Constants
+static constexpr uint16_t MAX_ITERATIONS = 255;
+static constexpr uint16_t WIDTH = 24; //SRL::TV::Width;
+static constexpr uint16_t HEIGHT = 18; //SRL::TV::Height;
+
+
+/** @brief Simple canvas for rendering the Mandelbrot set
  */
-class Canvas : SRL::Bitmap::IBitmap
-{
+class Canvas : public SRL::Bitmap::IBitmap {
 private:
-    /** @brief Canvas width
-     */
     uint16_t width;
-
-    /** @brief Canvas height
-     */
     uint16_t height;
-
-    /** @brief Image data
-     */
-    HighColor *imageData;
+    HighColor* imageData;
 
 public:
-    Canvas(uint16_t width, uint16_t height) : width(width), height(height), imageData(new HighColor[width * height]) {}
+    Canvas(uint16_t width, uint16_t height) 
+        : width(width)
+        , height(height)
+        , imageData(new HighColor[width * height]) {
+    }
 
-    /** @brief Destroy the canvas
-     */
-    ~Canvas()
-    {
-        if (this->imageData != nullptr)
-        {
-            delete this->imageData;
+    ~Canvas() {
+        delete[] imageData;
+    }
+
+    uint8_t* GetData() override {
+        return reinterpret_cast<uint8_t*>(imageData);
+    }
+
+    void SetPixel(uint16_t x, uint16_t y, const HighColor& color) {
+        if (x < width && y < height) {
+            imageData[y * width + x] = color;
         }
     }
 
-    /** @brief Get image data
-     * @return Pointer to image data
-     */
-    uint8_t *GetData() override
-    {
-        return (uint8_t *)this->imageData;
-    }
-
-    /** @brief Set image data
-     * @return Pointer to image data
-     */
-    void SetData(uint16_t x, uint16_t y, HighColor &&data)
-    {
-        if (x < this->width && y < this->height)
-        {
-            this->imageData[y * this->width + x] = std::move(data);
-        }
-    }
-
-    /** @brief Get image info
-     * @return image info
-     */
-    SRL::Bitmap::BitmapInfo GetInfo() override
-    {
-        return SRL::Bitmap::BitmapInfo(this->width, this->height);
+    SRL::Bitmap::BitmapInfo GetInfo() const {
+        return SRL::Bitmap::BitmapInfo(width, height);
     }
 };
 
-/** @brief Simple canvas
+/** @brief Color palette management
  */
-class Palette : SRL::Bitmap::Palette
-{
-
+class Palette {
+private:
+    uint16_t Count;
+    HighColor* Colors;
 public:
-    Palette(size_t count) : SRL::Bitmap::Palette(count) {}
+    explicit Palette(size_t count) : Count(count), Colors(new HighColor[count]) {}
+    
+    ~Palette() { delete[] Colors; }
 
-    ~Palette() {}
-
-    /** @brief Get image data
-     * @return Pointer to image data
-     */
-    void SetColor(size_t index, HighColor &&color)
-    {
-        if (index < Count)
-        {
-            this->Colors[index] = color;
+    void SetColor(size_t index, HighColor color) {
+        if (index < Count) {
+            Colors[index] = color;
+        } else {
+            Log::LogPrint<LogLevels::FATAL>("index(%d) out of bound", index);
         }
     }
 
-    /** @brief Get image data
-     * @return Pointer to image data
-     */
-    HighColor GetColor(size_t index)
-    {
-        if (index < Count)
-        {
-            return this->Colors[index];
+    HighColor GetColor(size_t index) const {
+        if (index < Count) {
+            return Colors[index];
         }
+        Log::LogPrint<LogLevels::FATAL>("index(%d) out of bound", index);
         return HighColor(0, 0, 0);
     }
+
+    void Init() {
+        for (uint16_t i = 0; i < Count-1; ++i) {
+            SetColor(i, HighColor(i, i * 2 % 256, i * 4 % 256));
+        }
+        SetColor(Count-1, HighColor(255, 255, 255));
+    }
 };
 
-/** @brief Canvas instance
- */
-Canvas *canvas = nullptr;
-
-/** @brief Palette instance
- */
-Palette *palette = nullptr;
-
-/** @brief Id of the canvas texture in VDP1 sprite RAM heap
- */
-int32_t canvasTextureId;
-
-/** @brief Canvas width
- */
-constexpr uint16_t width = SRL::TV::Width; // 320
-
-/** @brief Canvas height
- */
-constexpr uint16_t height = SRL::TV::Height; // 240
-
-static Fxp minReal = Fxp::Convert(-2.0);
-static Fxp maxReal = Fxp::Convert(1.0);
-static Fxp minImag = Fxp::Convert(-1.0);
-static Fxp maxImag = Fxp::Convert(1.0);
-const uint16_t maxIterations = 100;
-
-static uint16_t y = 0;
-static uint16_t x = 0;
-static uint8_t done = 0;
-
-typedef struct parameter_fixed
-{
+struct MandelbrotParameters {
     Fxp real;
     Fxp imag;
     uint16_t x;
     uint16_t y;
-} parameter_fixed;
+};
 
-// Function to check if a point is in the Mandelbrot set
-uint16_t isInMandelbrot(parameter_fixed *param)
-{
-    uint16_t iteration = 0;
-    Fxp zReal = param->real;
-    Fxp zImag = param->imag;
+class MandelbrotRenderer {
+private:
+    Canvas* canvas;
+    Palette* palette;
+    int32_t canvasTextureId;
+    
+    const Fxp minReal = -2.0;
+    const Fxp maxReal = 1.0;
+    const Fxp minImag = -1.0;
+    const Fxp maxImag = 1.0;
 
-    while (iteration < maxIterations)
+    uint16_t maxIterations;
+    uint16_t Width;
+    uint16_t Height;
+
+    uint16_t currentY = 0;
+    uint16_t currentX = 0;
+    bool renderComplete = false;
+
+
+public:
+    MandelbrotRenderer() :
+        canvas(nullptr),
+        palette(nullptr),
+        canvasTextureId(-1),
+        Width(WIDTH),
+        Height(HEIGHT),
+        maxIterations(MAX_ITERATIONS),
+        currentY(0),
+        currentX(0),
+        renderComplete(false)
     {
-        Fxp zRealTemp = zReal * zReal - zImag * zImag + param->real;
-        zImag = 2 * zReal * zImag + param->imag;
-        zReal = zRealTemp;
+        canvas = new Canvas(Width, Height);
 
-        if (zReal * zReal + zImag * zImag > 4.0)
-        {
-            return iteration;
+        if (canvas == nullptr) {
+            Log::LogPrint<LogLevels::FATAL>("canvas allocation error");
+            assert(canvas != nullptr && "canvas allocation error");
         }
 
-        ++iteration;
+        palette = new Palette(256);
+        if (!palette) {
+            Log::LogPrint<LogLevels::FATAL>("palette allocation error");
+            assert(palette != nullptr && "palette allocation error"); 
+        }
+
+        palette->Init();
+
+        canvasTextureId = SRL::VDP1::TryLoadTexture(canvas);
+
+        if (canvasTextureId < 0) {
+            Log::LogPrint<LogLevels::FATAL>("canvasTextureId(%d) not loaded", canvasTextureId);
+            assert(canvasTextureId => 0 && "palette allocation error"); 
+        }
     }
 
-    return maxIterations;
-}
-
-void mandelbrot()
-{
-    // slavedone = 1;
-    // uint32_t timemax = TIM_FRT_MCR_TO_CNT(100000);
-    // TIM_FRT_SET_16(0);
-
-    for (; y < height; y++)
-    {
-        for (; x < width; x++)
+    void render() {
+        if( currentY >= Height)
         {
+            currentY=0;
+            //renderComplete = false;
+        }
 
-            // if(TIM_FRT_CNT_TO_MCR(TIM_FRT_GET_16()) > timemax) {
-            //   return;
-            // }
+        //for (; currentY < HEIGHT && !renderComplete; currentY++) {
+            for (; currentX < Width; currentX++) {
+                MandelbrotParameters params{
+                    minReal + currentX * (maxReal - minReal) / (Width - 1),
+                    minImag + currentY * (maxImag - minImag) / (Height - 1),
+                    currentX,
+                    currentY
+                };
 
-            if (done)
-            {
-                return;
+                uint16_t iteration = calculateMandelbrot(params);
+                canvas->SetPixel(currentX, currentY, palette->GetColor(iteration % 256));
+                Log::LogPrint<LogLevels::TESTING>("Itr = %d", iteration);
             }
+            currentX = 0;
+            currentY++;
 
-            //   if (slavedone) {
-            //     slavedone = 0;
-            //     slave_param_fixed.real = minReal + x * (maxReal - minReal) / (width - 1);
-            //     slave_param_fixed.imag = minImag + y * (maxImag - minImag) / (height - 1);
-            //     slave_param.x = x;
-            //     slave_param.y = y;
-            //     slSlaveFunc(SlaveTask, (void *)(&slave_param_fixed));
-
-            //   } else {
-            parameter_fixed param;
-            param.real = minReal + x * (maxReal - minReal) / (width - 1);
-            param.imag = minImag + y * (maxImag - minImag) / (height - 1);
-            int iteration = isInMandelbrot(&param);
-            // slBMPset( x-(X_RESOLUTION>>1), y-(Y_RESOLUTION>>1), palette[iteration % 256] );
-            canvas->SetData(x, y, palette->GetColor(iteration % 256));
-            //  }
+            SRL::Debug::Print(1,2, "Debug %d (%d)", currentY, Height);
+        //}
+        if( currentY >= Height) {
+            renderComplete = true;
         }
-        x = 0;
+            
     }
 
-    done = 0;
-}
-
-/** @brief Copy the texture during vblank
- */
-void VBlankCopy()
-{
-    if (canvas != nullptr)
-    {
-        slDMACopy(canvas->GetData(), SRL::VDP1::Textures[canvasTextureId].GetData(), width * height * sizeof(uint16_t));
-        slDMAWait();
+    void copyToVDP1() const {
+        if (canvas) {
+            slDMACopy(canvas->GetData(), 
+                     SRL::VDP1::Textures[canvasTextureId].GetData(), 
+                     Width * Height * sizeof(uint16_t));
+            slDMAWait();
+        }
+        Log::LogPrint<LogLevels::TESTING>("copyToVDP1");
     }
-}
 
-// Main program entry
-int main()
-{
+    void draw() const {
+        SRL::Scene2D::DrawSprite(canvasTextureId, Vector3D(0.0, 0.0, 500.0));
+        Log::LogPrint<LogLevels::TESTING>("draw");
+    }
+
+    bool isComplete() const { return renderComplete; }
+
+private :
+
+    uint16_t calculateMandelbrot(const MandelbrotParameters& params) const {
+        uint16_t iteration = 0;
+        Fxp zReal = params.real;
+        Fxp zImag = params.imag;
+        const Fxp two = 2.0;
+        const Fxp four = 4.0;
+
+        while (iteration < maxIterations) {
+            Fxp zRealTemp = zReal * zReal - zImag * zImag + params.real;
+            zImag = two * zReal * zImag + params.imag;
+            zReal = zRealTemp;
+
+            if (zReal * zReal + zImag * zImag > four) {
+                return iteration;
+            }
+            ++iteration;
+        }
+        return maxIterations;
+    }
+};
+
+int main() {
+    static MandelbrotRenderer* g_renderer = nullptr;
+
     SRL::Core::Initialize(HighColor(0, 0, 0));
-    // SRL::Debug::Print(1,1, "Random image generator sample");
+    
+    g_renderer = new MandelbrotRenderer();
 
-    // Initialize canvas in VDP1 sprite ram
-    canvas = new Canvas(width, height);
-    canvasTextureId = SRL::VDP1::TryLoadTexture((SRL::Bitmap::IBitmap *)canvas);
+    assert(g_renderer != nullptr && "Failed to create MandelbrotRenderer");
 
-    // Initialize palette
-    palette = new Palette(256);
-    for (size_t i = 0; i < 255; ++i)
-    {
-        palette->SetColor(i, HighColor(i, i * 2 % 256, i * 4 % 256));
-    }
-    palette->SetColor(255, HighColor(255, 255, 255));
-
-    // Setup event to copy the canvas to VDP1 sprite RAM on every vblank
-    SRL::Core::OnVblank += VBlankCopy;
-
-    mandelbrot();
+    // Setup VBlank event
+    SRL::Core::OnVblank += []() { g_renderer->copyToVDP1(); };
 
     // Main program loop
-    while (1)
-    {
+    while (true) {
+        SRL::Debug::Print(1,1, "Debug Print sample");
+        
 
-        // Draw the canvas on screen as VDP1 sprite
-        SRL::Scene2D::DrawSprite(canvasTextureId, Vector3D(0.0, 0.0, 500.0));
+        // Render the Mandelbrot set
+        g_renderer->render();
 
+        g_renderer->draw();
         SRL::Core::Synchronize();
     }
 
