@@ -20,7 +20,9 @@
         "*.hpp": "cpp",
         "*.cxx": "cpp",
         "*.def": "c",
-        "compare": "cpp"
+        "compare": "cpp",
+        "stdexcept": "cpp",
+        "cassert": "cpp"
     },
     "cmake.configureOnOpen": false,
     "makefile.makefilePath": "./makefile"
