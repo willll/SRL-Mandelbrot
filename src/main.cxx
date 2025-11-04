@@ -9,46 +9,15 @@ using namespace SRL::Math::Types;
 using namespace SRL::Logger;
 
 // Constants
-static constexpr uint16_t MAX_ITERATIONS = 255;
-static constexpr uint16_t WIDTH = 24; //SRL::TV::Width;
-static constexpr uint16_t HEIGHT = 18; //SRL::TV::Height;
-
-
-/** @brief Simple canvas for rendering the Mandelbrot set
- */
-class Canvas : public SRL::Bitmap::IBitmap {
-private:
-    uint16_t width;
-    uint16_t height;
-    HighColor* imageData;
-
-public:
-    Canvas(uint16_t width, uint16_t height) 
-        : width(width)
-        , height(height)
-        , imageData(new HighColor[width * height]) {
-    }
-
-    ~Canvas() {
-        delete[] imageData;
-    }
-
-    uint8_t* GetData() override {
-        return reinterpret_cast<uint8_t*>(imageData);
-    }
-
-    void SetPixel(uint16_t x, uint16_t y, const HighColor& color) {
-        if (x < width && y < height) {
-            imageData[y * width + x] = color;
-        }
-    }
-
-    SRL::Bitmap::BitmapInfo GetInfo() const {
-        return SRL::Bitmap::BitmapInfo(width, height);
-    }
-};
+static constexpr uint16_t MAX_ITERATIONS = 2;
+static constexpr uint16_t WIDTH = 240; //SRL::TV::Width;
+static constexpr uint16_t HEIGHT = 180; //SRL::TV::Height;
 
 /** @brief Color palette management
+ * 
+ * Manages a color palette for the Mandelbrot set visualization.
+ * Provides methods for setting and retrieving colors, with bounds checking.
+ * The palette is initialized with a gradient of colors for visualization.
  */
 class Palette {
 private:
@@ -59,7 +28,7 @@ public:
     
     ~Palette() { delete[] Colors; }
 
-    void SetColor(size_t index, HighColor color) {
+    void SetColor(uint16_t index, HighColor color) {
         if (index < Count) {
             Colors[index] = color;
         } else {
@@ -67,7 +36,7 @@ public:
         }
     }
 
-    HighColor GetColor(size_t index) const {
+    HighColor GetColor(uint16_t index) const {
         if (index < Count) {
             return Colors[index];
         }
@@ -77,19 +46,70 @@ public:
 
     void Init() {
         for (uint16_t i = 0; i < Count-1; ++i) {
-            SetColor(i, HighColor(i, i * 2 % 256, i * 4 % 256));
+            //SetColor(i, HighColor(i, i * 2 % 256, i * 4 % 256));
+            SetColor(i, HighColor(128, 128, 128));
         }
         SetColor(Count-1, HighColor(255, 255, 255));
     }
 };
 
-struct MandelbrotParameters {
-    Fxp real;
-    Fxp imag;
-    uint16_t x;
-    uint16_t y;
+/** @brief Simple canvas for rendering the Mandelbrot set
+ * 
+ * Canvas class implements a bitmap interface for drawing the Mandelbrot set.
+ * It manages a buffer of high color pixels and provides methods for pixel manipulation.
+ */
+class Canvas : public SRL::Bitmap::IBitmap {
+private:
+    uint16_t width;
+    uint16_t height;
+    HighColor* imageData;
+    Palette& palette;
+
+public:
+    explicit Canvas(Palette& palette, uint16_t width, uint16_t height) 
+        : width(width)
+        , height(height)
+        , imageData(new HighColor[width * height])
+        , palette(palette) {
+    }
+
+    ~Canvas() {
+        delete[] imageData;
+    }
+
+    uint8_t* GetData() override {
+        return reinterpret_cast<uint8_t*>(imageData);
+    }
+
+    void SetPixel(uint16_t x, uint16_t y, uint16_t color) {
+        if (x < width && y < height) {
+            imageData[y * width + x] = palette.GetColor(color);
+        }
+    }
+
+    SRL::Bitmap::BitmapInfo GetInfo() const {
+        return SRL::Bitmap::BitmapInfo(width, height);
+    }
 };
 
+/** @brief Parameters for Mandelbrot set calculation
+ * 
+ * Structure containing the parameters needed for calculating a point in the Mandelbrot set.
+ * Includes complex plane coordinates (real, imaginary) and pixel coordinates (x, y).
+ */
+struct MandelbrotParameters {
+    Fxp real;      ///< Real component of complex number
+    Fxp imag;      ///< Imaginary component of complex number
+    uint16_t x;    ///< X coordinate on the canvas
+    uint16_t y;    ///< Y coordinate on the canvas
+};
+
+/** @brief Mandelbrot set renderer
+ * 
+ * Handles the rendering of the Mandelbrot set fractal.
+ * Manages canvas, palette, and provides methods for progressive rendering
+ * and display of the fractal on the screen using VDP1.
+ */
 class MandelbrotRenderer {
 private:
     Canvas* canvas;
@@ -122,13 +142,6 @@ public:
         currentX(0),
         renderComplete(false)
     {
-        canvas = new Canvas(Width, Height);
-
-        if (canvas == nullptr) {
-            Log::LogPrint<LogLevels::FATAL>("canvas allocation error");
-            assert(canvas != nullptr && "canvas allocation error");
-        }
-
         palette = new Palette(256);
         if (!palette) {
             Log::LogPrint<LogLevels::FATAL>("palette allocation error");
@@ -136,6 +149,13 @@ public:
         }
 
         palette->Init();
+
+        canvas = new Canvas(*palette, Width, Height);
+
+        if (canvas == nullptr) {
+            Log::LogPrint<LogLevels::FATAL>("canvas allocation error");
+            assert(canvas != nullptr && "canvas allocation error");
+        }
 
         canvasTextureId = SRL::VDP1::TryLoadTexture(canvas);
 
@@ -145,6 +165,12 @@ public:
         }
     }
 
+    /** @brief Renders a portion of the Mandelbrot set
+     * 
+     * Progressively renders the Mandelbrot set line by line.
+     * Uses a scanline approach for optimization, rendering one line at a time.
+     * Updates the canvas with calculated values and manages rendering state.
+     */
     void render() {
         if( currentY >= Height)
         {
@@ -162,8 +188,7 @@ public:
                 };
 
                 uint16_t iteration = calculateMandelbrot(params);
-                canvas->SetPixel(currentX, currentY, palette->GetColor(iteration % 256));
-                Log::LogPrint<LogLevels::TESTING>("Itr = %d", iteration);
+                canvas->SetPixel(currentX, currentY, iteration % 256);
             }
             currentX = 0;
             currentY++;
@@ -176,25 +201,47 @@ public:
             
     }
 
+    /** @brief Copies the rendered image to VDP1 memory
+     * 
+     * Uses DMA to transfer the rendered canvas data to VDP1 texture memory.
+     * This operation is synchronized to ensure proper data transfer.
+     */
     void copyToVDP1() const {
         if (canvas) {
             slDMACopy(canvas->GetData(), 
                      SRL::VDP1::Textures[canvasTextureId].GetData(), 
-                     Width * Height * sizeof(uint16_t));
+                     Width * Height * sizeof(HighColor));
             slDMAWait();
         }
         Log::LogPrint<LogLevels::TESTING>("copyToVDP1");
     }
 
+    /** @brief Draws the Mandelbrot set to the screen
+     * 
+     * Renders the current state of the Mandelbrot set using VDP1 sprite drawing.
+     * Positions the sprite at the specified coordinates in 3D space.
+     */
     void draw() const {
         SRL::Scene2D::DrawSprite(canvasTextureId, Vector3D(0.0, 0.0, 500.0));
         Log::LogPrint<LogLevels::TESTING>("draw");
     }
 
+    /** @brief Checks if rendering is complete
+     * 
+     * @return true if the entire Mandelbrot set has been rendered, false otherwise
+     */
     bool isComplete() const { return renderComplete; }
 
 private :
 
+    /** @brief Calculates the Mandelbrot set value for a given point
+     * 
+     * Performs the iterative calculation to determine if a point is in the Mandelbrot set.
+     * Returns the number of iterations taken before the point escapes, or maxIterations if it's in the set.
+     * 
+     * @param params Parameters containing the complex point coordinates
+     * @return Number of iterations before escape, or maxIterations if the point is in the set
+     */
     uint16_t calculateMandelbrot(const MandelbrotParameters& params) const {
         uint16_t iteration = 0;
         Fxp zReal = params.real;
