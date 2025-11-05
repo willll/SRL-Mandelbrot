@@ -285,20 +285,9 @@ private:
     }
 };
 
-static MandelbrotRenderer *g_renderer = nullptr;
-
-/** @brief Copy the texture during vblank
- */
-void VBlankCopy()
-{
-    if (g_renderer != nullptr)
-    {
-        g_renderer->copyToVDP1();
-    }
-}
-
 int main()
 {
+    static MandelbrotRenderer *g_renderer = nullptr;
 
     SRL::Core::Initialize(HighColor(0, 0, 0));
 
@@ -307,7 +296,7 @@ int main()
     assert(g_renderer != nullptr && "Failed to create MandelbrotRenderer");
 
     // Setup VBlank event
-    SRL::Core::OnVblank += VBlankCopy;
+    SRL::Core::OnVblank += []() { g_renderer->copyToVDP1(); };;
 
     // Main program loop
     while (true)
