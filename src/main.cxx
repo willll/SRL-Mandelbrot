@@ -9,7 +9,7 @@ using namespace SRL::Math::Types;
 using namespace SRL::Logger;
 
 // Constants
-static constexpr uint16_t MAX_ITERATIONS = 255;
+static constexpr uint16_t MAX_ITERATIONS = 100;
 static constexpr uint16_t WIDTH = SRL::TV::Width;
 static constexpr uint16_t HEIGHT = SRL::TV::Height;
 
@@ -19,22 +19,16 @@ static constexpr uint16_t HEIGHT = SRL::TV::Height;
  * Provides methods for setting and retrieving colors, with bounds checking.
  * The palette is initialized with a gradient of colors for visualization.
  */
-class Palette
+class Palette : public SRL::Bitmap::Palette
 {
-private:
-    uint16_t Count;
-    HighColor *Colors;
-
 public:
-    explicit Palette(size_t count) : Count(count), Colors(new HighColor[count]) {}
+    explicit Palette(size_t count) : SRL::Bitmap::Palette(count) {}
 
-    ~Palette() { delete[] Colors; }
-
-    void SetColor(uint16_t index, HighColor color)
+    void SetColor(uint16_t index, HighColor && color)
     {
         if (index < Count)
         {
-            Colors[index] = color;
+            Colors[index] = std::move(color);
         }
         else
         {
@@ -73,17 +67,21 @@ private:
     uint16_t width;
     uint16_t height;
     HighColor *imageData;
-    Palette &palette;
+    SRL::Bitmap::BitmapInfo *bitmap;
 
 public:
     explicit Canvas(uint16_t width, uint16_t height, Palette &palette)
-        : width(width), height(height), imageData(new HighColor[width * height]), palette(palette)
+        : width(width)
+        , height(height)
+        , imageData(new HighColor[width * height])
+        , bitmap(new SRL::Bitmap::BitmapInfo(width, height, &palette))
     {
     }
 
     ~Canvas()
     {
         delete[] imageData;
+        delete bitmap;
     }
 
     uint8_t *GetData() override
@@ -95,13 +93,43 @@ public:
     {
         if (x < width && y < height)
         {
-            imageData[y * width + x] = palette.GetColor(color);
+            imageData[y * width + x] = bitmap->Palette->Colors[color];
         }
     }
 
     SRL::Bitmap::BitmapInfo GetInfo() override
     {
-        return SRL::Bitmap::BitmapInfo(width, height);
+        return *bitmap;
+    }
+
+    static int16_t LoadPalette(SRL::Bitmap::BitmapInfo* bitmap)
+    {
+        // Get free CRAM bank
+        int32_t id = SRL::CRAM::GetFreeBank(bitmap->ColorMode);
+
+        Log::LogPrint<LogLevels::INFO>("palette (%d) ColorMode : %d", id, bitmap->ColorMode);
+
+        if (id >= 0)
+        {
+            SRL::CRAM::Palette palette(bitmap->ColorMode, id);
+
+            if (palette.Load((HighColor *)bitmap->Palette->Colors, bitmap->Palette->Count) >= 0)
+            {
+                // Mark bank as in use
+                SRL::CRAM::SetBankUsedState(id, bitmap->ColorMode, true);
+                return id;
+            }
+            else
+            {
+                Log::LogPrint<LogLevels::FATAL>("palette load failure");
+            }
+        }
+        else{
+            Log::LogPrint<LogLevels::FATAL>("palette GetFreeBank failure");
+        }
+
+        // No free bank found
+        return -1;
     }
 };
 
@@ -172,7 +200,7 @@ public:
             assert(canvas != nullptr && "canvas allocation error");
         }
 
-        canvasTextureId = SRL::VDP1::TryLoadTexture(canvas);
+        canvasTextureId = SRL::VDP1::TryLoadTexture(canvas, Canvas::LoadPalette);
 
         if (canvasTextureId < 0)
         {
@@ -208,10 +236,10 @@ public:
             canvas->SetPixel(currentX, currentY, iteration % 256);
         }
         currentX = 0;
-        currentY++;
+        ++currentY;
 
-        //SRL::Debug::Print(1, 2, "Debug %d (%d)", currentY, Height);
-        //}
+        // SRL::Debug::Print(1, 2, "Debug %d (%d)", currentY, Height);
+        // }
         if (currentY >= Height)
         {
             renderComplete = true;
@@ -296,7 +324,9 @@ int main()
     assert(g_renderer != nullptr && "Failed to create MandelbrotRenderer");
 
     // Setup VBlank event
-    SRL::Core::OnVblank += []() { g_renderer->copyToVDP1(); };;
+    SRL::Core::OnVblank += []()
+    { g_renderer->copyToVDP1(); };
+    ;
 
     // Main program loop
     while (true)
