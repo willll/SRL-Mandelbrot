@@ -48,11 +48,11 @@ public:
 
     void Init()
     {
-        for (uint16_t i = 0; i < Count - 1; ++i)
+        for (uint8_t i = 0; i < Count - 1; ++i)
         {
-            SetColor(i, HighColor(i, i * 2 % 256, i * 4 % 256));
+            SetColor(i, HighColor::FromRGB555(i, i * 2 % 256, i * 4 % 256));
         }
-        SetColor(Count - 1, HighColor(255, 255, 255));
+        SetColor(Count - 1, HighColor::FromRGB555(255, 255, 255));
     }
 };
 
@@ -66,14 +66,14 @@ class Canvas : public SRL::Bitmap::IBitmap
 private:
     uint16_t width;
     uint16_t height;
-    HighColor *imageData;
+    uint8_t *imageData;
     SRL::Bitmap::BitmapInfo *bitmap;
 
 public:
     explicit Canvas(uint16_t width, uint16_t height, Palette &palette)
         : width(width)
         , height(height)
-        , imageData(new HighColor[width * height])
+        , imageData(new uint8_t[width * height])
         , bitmap(new SRL::Bitmap::BitmapInfo(width, height, &palette))
     {
     }
@@ -89,11 +89,11 @@ public:
         return (uint8_t *)this->imageData;
     }
 
-    void SetPixel(uint16_t x, uint16_t y, uint16_t color)
+    void SetPixel(uint16_t x, uint16_t y, uint8_t color)
     {
         if (x < width && y < height)
         {
-            imageData[y * width + x] = bitmap->Palette->Colors[color];
+            this->imageData[y * width + x] = bitmap->Palette->Colors[color];
         }
     }
 
@@ -138,10 +138,11 @@ public:
  * Structure containing the parameters needed for calculating a point in the Mandelbrot set.
  * Includes complex plane coordinates (real, imaginary) and pixel coordinates (x, y).
  */
+template <typename T>
 struct MandelbrotParameters
 {
-    Fxp real;   ///< Real component of complex number
-    Fxp imag;   ///< Imaginary component of complex number
+    T real;   ///< Real component of complex number
+    T imag;   ///< Imaginary component of complex number
     uint16_t x; ///< X coordinate on the canvas
     uint16_t y; ///< Y coordinate on the canvas
 };
@@ -152,6 +153,7 @@ struct MandelbrotParameters
  * Manages canvas, palette, and provides methods for progressive rendering
  * and display of the fractal on the screen using VDP1.
  */
+template <typename RealT = Fxp>
 class MandelbrotRenderer
 {
 private:
@@ -159,10 +161,10 @@ private:
     Palette *palette;
     int32_t canvasTextureId;
 
-    const Fxp minReal = -2.0;
-    const Fxp maxReal = 1.0;
-    const Fxp minImag = -1.0;
-    const Fxp maxImag = 1.0;
+    const RealT minReal = static_cast<RealT>(-2.0);
+    const RealT maxReal = static_cast<RealT>(1.0);
+    const RealT minImag = static_cast<RealT>(-1.0);
+    const RealT maxImag = static_cast<RealT>(1.0);
 
     uint16_t maxIterations;
     uint16_t Width;
@@ -226,7 +228,7 @@ public:
         // for (; currentY < HEIGHT && !renderComplete; currentY++) {
         for (currentX = 0; currentX < Width; currentX++)
         {
-            MandelbrotParameters params{
+            MandelbrotParameters<RealT> params{
                 minReal + currentX * (maxReal - minReal) / (Width - 1),
                 minImag + currentY * (maxImag - minImag) / (Height - 1),
                 currentX,
@@ -289,17 +291,17 @@ private:
      * @param params Parameters containing the complex point coordinates
      * @return Number of iterations before escape, or maxIterations if the point is in the set
      */
-    uint16_t calculateMandelbrot(const MandelbrotParameters &params) const
+    uint16_t calculateMandelbrot(const MandelbrotParameters<RealT> &params) const
     {
         uint16_t iteration = 0;
-        Fxp zReal = params.real;
-        Fxp zImag = params.imag;
-        const Fxp two = 2.0;
-        const Fxp four = 4.0;
+        RealT zReal = params.real;
+        RealT zImag = params.imag;
+        const RealT two = static_cast<RealT>(2.0);
+        const RealT four = static_cast<RealT>(4.0);
 
         while (iteration < maxIterations)
         {
-            Fxp zRealTemp = zReal * zReal - zImag * zImag + params.real;
+            RealT zRealTemp = zReal * zReal - zImag * zImag + params.real;
             zImag = two * zReal * zImag + params.imag;
             zReal = zRealTemp;
 
@@ -315,11 +317,11 @@ private:
 
 int main()
 {
-    static MandelbrotRenderer *g_renderer = nullptr;
+    static MandelbrotRenderer<Fxp> *g_renderer = nullptr;
 
     SRL::Core::Initialize(HighColor(0, 0, 0));
 
-    g_renderer = new MandelbrotRenderer();
+    g_renderer = new MandelbrotRenderer<Fxp>();
 
     assert(g_renderer != nullptr && "Failed to create MandelbrotRenderer");
 
