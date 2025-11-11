@@ -147,6 +147,51 @@ struct MandelbrotParameters
     uint16_t y; ///< Y coordinate on the canvas
 };
 
+// Forward declaration of MandelbrotRenderer so SlaveTask can reference it
+template <typename RealT>
+class MandelbrotRenderer;
+
+template <typename RealT = Fxp>
+class SlaveTask : public SRL::Types::ITask
+{
+public:
+
+    /** @brief Constructor
+    */
+    SlaveTask() : params(), iteration(0) {}
+
+    void Do();
+
+    void setMandelbrotRenderer(const MandelbrotParameters<RealT> & _params)
+    {
+        params = _params;
+    }
+
+    const MandelbrotParameters<RealT> getMandelbrotRenderer() const
+    {
+        return params;
+    }
+
+    uint16_t getCurrentX() const
+    {
+        return params.x;
+    }
+
+    uint16_t getCurrentY() const
+    {
+        return params.y;
+    }
+
+    uint16_t getIteration() const
+    {
+        return iteration;
+    }
+
+protected:
+    MandelbrotParameters<RealT> params;
+    uint16_t iteration;
+};
+
 /** @brief Mandelbrot set renderer
  *
  * Handles the rendering of the Mandelbrot set fractal.
@@ -166,7 +211,6 @@ private:
     const RealT minImag = static_cast<RealT>(-1.0);
     const RealT maxImag = static_cast<RealT>(1.0);
 
-    uint16_t maxIterations;
     uint16_t Width;
     uint16_t Height;
 
@@ -174,16 +218,17 @@ private:
     uint16_t currentX = 0;
     bool renderComplete = false;
 
+    SlaveTask<RealT> task;
 public:
     MandelbrotRenderer() : canvas(nullptr),
                            palette(nullptr),
                            canvasTextureId(-1),
                            Width(WIDTH),
                            Height(HEIGHT),
-                           maxIterations(MAX_ITERATIONS),
                            currentY(0),
                            currentX(0),
-                           renderComplete(false)
+                           renderComplete(false),
+                           task()
     {
         palette = new Palette(256);
         if (!palette)
@@ -209,6 +254,8 @@ public:
             Log::LogPrint<LogLevels::FATAL>("canvasTextureId(%d) not loaded", canvasTextureId);
             assert(canvasTextureId = > 0 && "palette allocation error");
         }
+
+        task.ResetTask();
     }
 
     /** @brief Renders a portion of the Mandelbrot set
@@ -234,14 +281,34 @@ public:
                 currentX,
                 currentY};
 
-            uint16_t iteration = calculateMandelbrot(params);
-            canvas->SetPixel(currentX, currentY, iteration % 256);
+                if(!task.IsRunning())
+                {
+                    if (task.IsDone())
+                    {
+                        canvas->SetPixel(task.getCurrentX(), task.getCurrentY(), task.getIteration() % 256);
+                    }
+
+                    task.setMandelbrotRenderer(params);
+                    SRL::Slave::ExecuteOnSlave(task);
+                }
+                else
+                {
+                    uint16_t iteration = MandelbrotRenderer<RealT>::calculateMandelbrot(params);
+                    canvas->SetPixel(currentX, currentY, iteration % 256);
+                }
         }
         currentX = 0;
         ++currentY;
 
-        // SRL::Debug::Print(1, 2, "Debug %d (%d)", currentY, Height);
-        // }
+        // If the slave is not finish, discard the result
+        if(task.IsRunning())
+        {
+            MandelbrotParameters<RealT> params = task.getMandelbrotRenderer();
+            uint16_t iteration = MandelbrotRenderer<RealT>::calculateMandelbrot(params);
+
+            canvas->SetPixel(params.x, params.y, iteration % 256);
+        }
+
         if (currentY >= Height)
         {
             renderComplete = true;
@@ -282,7 +349,6 @@ public:
      */
     bool isComplete() const { return renderComplete; }
 
-private:
     /** @brief Calculates the Mandelbrot set value for a given point
      *
      * Performs the iterative calculation to determine if a point is in the Mandelbrot set.
@@ -291,7 +357,7 @@ private:
      * @param params Parameters containing the complex point coordinates
      * @return Number of iterations before escape, or maxIterations if the point is in the set
      */
-    uint16_t calculateMandelbrot(const MandelbrotParameters<RealT> &params) const
+    static uint16_t calculateMandelbrot(const MandelbrotParameters<RealT> &params)
     {
         uint16_t iteration = 0;
         RealT zReal = params.real;
@@ -299,7 +365,7 @@ private:
         const RealT two = static_cast<RealT>(2.0);
         const RealT four = static_cast<RealT>(4.0);
 
-        while (iteration < maxIterations)
+        while (iteration < MAX_ITERATIONS)
         {
             RealT zRealTemp = zReal * zReal - zImag * zImag + params.real;
             zImag = two * zReal * zImag + params.imag;
@@ -311,9 +377,16 @@ private:
             }
             ++iteration;
         }
-        return maxIterations;
+        return MAX_ITERATIONS;
     }
 };
+
+// Implement SlaveTask::Do() after MandelbrotRenderer is defined
+template <typename RealT>
+void SlaveTask<RealT>::Do()
+{
+    iteration = MandelbrotRenderer<RealT>::calculateMandelbrot(params);
+}
 
 int main()
 {
