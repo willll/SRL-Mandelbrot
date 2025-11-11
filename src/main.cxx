@@ -24,6 +24,13 @@ class Palette : public SRL::Bitmap::Palette
 public:
     explicit Palette(size_t count) : SRL::Bitmap::Palette(count) {}
 
+    /** @brief Set a palette entry
+     *
+     * Stores a color at the given palette index. Logs a fatal error if the
+     * index is out of range.
+     * @param index Palette index to set
+     * @param color Color value to move into the palette
+     */
     void SetColor(uint16_t index, HighColor && color)
     {
         if (index < Count)
@@ -36,6 +43,13 @@ public:
         }
     }
 
+    /** @brief Retrieve a color from the palette
+     *
+     * Returns the HighColor stored at the given index. If the index is out of
+     * bounds a fatal log is emitted and a black color is returned.
+     * @param index Palette index to retrieve
+     * @return HighColor value at the index (or black on error)
+     */
     HighColor GetColor(uint16_t index) const
     {
         if (index < Count)
@@ -46,6 +60,11 @@ public:
         return HighColor(0, 0, 0);
     }
 
+    /** @brief Initialize the palette with a default gradient
+     *
+     * Fills the palette with a simple color gradient and sets the final entry
+     * to white.
+     */
     void Init()
     {
         for (uint8_t i = 0; i < Count - 1; ++i)
@@ -70,6 +89,13 @@ private:
     SRL::Bitmap::BitmapInfo *bitmap;
 
 public:
+    /** @brief Construct a canvas
+     *
+     * Allocates the image buffer and the BitmapInfo that references the palette.
+     * @param width Width of the canvas in pixels
+     * @param height Height of the canvas in pixels
+     * @param palette Palette to be used by the bitmap info
+     */
     explicit Canvas(uint16_t width, uint16_t height, Palette &palette)
         : width(width)
         , height(height)
@@ -78,17 +104,27 @@ public:
     {
     }
 
+    /** @brief Destroy the canvas and free resources */
     ~Canvas()
     {
         delete[] imageData;
         delete bitmap;
     }
 
+    /** @brief Get raw pointer to image data
+     *
+     * Returns a pointer to the internal 8-bit indexed image buffer.
+     */
     uint8_t *GetData() override
     {
         return (uint8_t *)this->imageData;
     }
 
+    /** @brief Set a pixel in the image buffer
+     *
+     * Writes an 8-bit palette index into the image buffer at (x,y). Bounds
+     * are checked before writing.
+     */
     void SetPixel(uint16_t x, uint16_t y, uint8_t color)
     {
         if (x < width && y < height)
@@ -97,11 +133,20 @@ public:
         }
     }
 
+    /** @brief Get bitmap info for this canvas
+     *
+     * Returns a copy of the internal BitmapInfo object.
+     */
     SRL::Bitmap::BitmapInfo GetInfo() override
     {
         return *bitmap;
     }
 
+    /** @brief Load a palette into CRAM
+     *
+     * Attempts to find a free CRAM bank, upload the palette and mark the
+     * bank as used. Returns the bank id on success or -1 on failure.
+     */
     static int16_t LoadPalette(SRL::Bitmap::BitmapInfo* bitmap)
     {
         // Get free CRAM bank
@@ -157,31 +202,49 @@ class SlaveTask : public SRL::Types::ITask
 public:
 
     /** @brief Constructor
-    */
+     *
+     * Initializes an empty task ready for parameters to be set.
+     */
     SlaveTask() : params(), iteration(0) {}
 
+    /** @brief Execute the task work
+     *
+     * This is implemented after `MandelbrotRenderer` so the renderer's
+     * templated calculate function can be referenced.
+     */
     void Do();
 
+    /** @brief Set parameters for the task
+     *
+     * Copies the MandelbrotParameters into the task so the slave worker
+     * can compute the iteration count for that pixel.
+     */
     void setMandelbrotRenderer(const MandelbrotParameters<RealT> & _params)
     {
         params = _params;
     }
 
+    /** @brief Retrieve the parameters currently stored in the task
+     * @return copy of the stored MandelbrotParameters
+     */
     const MandelbrotParameters<RealT> getMandelbrotRenderer() const
     {
         return params;
     }
 
+    /** @brief Get the X coordinate stored in the task parameters */
     uint16_t getCurrentX() const
     {
         return params.x;
     }
 
+    /** @brief Get the Y coordinate stored in the task parameters */
     uint16_t getCurrentY() const
     {
         return params.y;
     }
 
+    /** @brief Return the computed iteration count (if available) */
     uint16_t getIteration() const
     {
         return iteration;
@@ -220,6 +283,12 @@ private:
 
     SlaveTask<RealT> task;
 public:
+    /** @brief Construct a MandelbrotRenderer
+     *
+     * Allocates palette and canvas resources and attempts to load the
+     * texture into VDP1. The renderer is ready to progressively render
+     * lines after construction.
+     */
     MandelbrotRenderer() : canvas(nullptr),
                            palette(nullptr),
                            canvasTextureId(-1),
@@ -258,11 +327,11 @@ public:
         task.ResetTask();
     }
 
-    /** @brief Renders a portion of the Mandelbrot set
+    /** @brief Render one scanline of the Mandelbrot set
      *
-     * Progressively renders the Mandelbrot set line by line.
-     * Uses a scanline approach for optimization, rendering one line at a time.
-     * Updates the canvas with calculated values and manages rendering state.
+     * Progressively computes and writes one horizontal line of the
+     * Mandelbrot image to the canvas. The method advances internal
+     * scanline state so repeated calls complete the full image.
      */
     void render()
     {
@@ -306,10 +375,10 @@ public:
         }
     }
 
-    /** @brief Copies the rendered image to VDP1 memory
+    /** @brief Copy canvas image to VDP1 texture memory via DMA
      *
-     * Uses DMA to transfer the rendered canvas data to VDP1 texture memory.
-     * This operation is synchronized to ensure proper data transfer.
+     * Performs a DMA transfer from the canvas image buffer into the VDP1
+     * texture slot previously allocated for this canvas.
      */
     void copyToVDP1() const
     {
@@ -323,10 +392,10 @@ public:
         Log::LogPrint<LogLevels::TESTING>("copyToVDP1");
     }
 
-    /** @brief Draws the Mandelbrot set to the screen
+    /** @brief Draw the current texture to screen using VDP1 sprite
      *
-     * Renders the current state of the Mandelbrot set using VDP1 sprite drawing.
-     * Positions the sprite at the specified coordinates in 3D space.
+     * Submits a sprite draw call that uses the canvas texture to render the
+     * Mandelbrot image on screen.
      */
     void draw() const
     {
@@ -334,19 +403,19 @@ public:
         Log::LogPrint<LogLevels::TESTING>("draw");
     }
 
-    /** @brief Checks if rendering is complete
-     *
-     * @return true if the entire Mandelbrot set has been rendered, false otherwise
+    /** @brief Query whether the renderer finished the full image
+     * @return true when all scanlines have been rendered
      */
     bool isComplete() const { return renderComplete; }
 
-    /** @brief Calculates the Mandelbrot set value for a given point
+
+    /** @brief Calculate iteration count for a point in the complex plane
      *
-     * Performs the iterative calculation to determine if a point is in the Mandelbrot set.
-     * Returns the number of iterations taken before the point escapes, or maxIterations if it's in the set.
-     *
-     * @param params Parameters containing the complex point coordinates
-     * @return Number of iterations before escape, or maxIterations if the point is in the set
+     * Iterates z_{n+1} = z_n^2 + c until the magnitude exceeds 2 or the
+     * maximum iteration count is reached. Returns the number of iterations
+     * performed (useful for coloring).
+     * @param params MandelbrotParameters containing the complex coordinate
+     * @return iteration count (0..MAX_ITERATIONS)
      */
     static uint16_t calculateMandelbrot(const MandelbrotParameters<RealT> &params)
     {
@@ -372,13 +441,23 @@ public:
     }
 };
 
-// Implement SlaveTask::Do() after MandelbrotRenderer is defined
+/** @brief Slave task execution implementation
+ *
+ * Runs the Mandelbrot iteration calculation for the stored parameters. This
+ * implementation is placed after the `MandelbrotRenderer` definition so it
+ * can reference the renderer's templated calculate function.
+ */
 template <typename RealT>
 void SlaveTask<RealT>::Do()
 {
     iteration = MandelbrotRenderer<RealT>::calculateMandelbrot(params);
 }
 
+/** @brief Program entry point
+ *
+ * Initializes the SRL core, constructs the Mandelbrot renderer and enters the
+ * main loop which progressively renders the fractal and draws it to screen.
+ */
 int main()
 {
     static MandelbrotRenderer<Fxp> *g_renderer = nullptr;
