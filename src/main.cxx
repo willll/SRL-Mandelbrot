@@ -31,7 +31,7 @@ public:
      * @param index Palette index to set
      * @param color Color value to move into the palette
      */
-    void SetColor(uint16_t index, HighColor && color)
+    void SetColor(uint16_t index, HighColor &&color)
     {
         if (index < Count)
         {
@@ -97,10 +97,7 @@ public:
      * @param palette Palette to be used by the bitmap info
      */
     explicit Canvas(uint16_t width, uint16_t height, Palette &palette)
-        : width(width)
-        , height(height)
-        , imageData(new uint8_t[width * height])
-        , bitmap(new SRL::Bitmap::BitmapInfo(width, height, &palette))
+        : width(width), height(height), imageData(new uint8_t[width * height]), bitmap(new SRL::Bitmap::BitmapInfo(width, height, &palette))
     {
     }
 
@@ -147,7 +144,7 @@ public:
      * Attempts to find a free CRAM bank, upload the palette and mark the
      * bank as used. Returns the bank id on success or -1 on failure.
      */
-    static int16_t LoadPalette(SRL::Bitmap::BitmapInfo* bitmap)
+    static int16_t LoadPalette(SRL::Bitmap::BitmapInfo *bitmap)
     {
         // Get free CRAM bank
         int32_t id = SRL::CRAM::GetFreeBank(bitmap->ColorMode);
@@ -169,7 +166,8 @@ public:
                 Log::LogPrint<LogLevels::FATAL>("palette load failure");
             }
         }
-        else{
+        else
+        {
             Log::LogPrint<LogLevels::FATAL>("palette GetFreeBank failure");
         }
 
@@ -186,8 +184,8 @@ public:
 template <typename T>
 struct MandelbrotParameters
 {
-    T real;   ///< Real component of complex number
-    T imag;   ///< Imaginary component of complex number
+    T real;     ///< Real component of complex number
+    T imag;     ///< Imaginary component of complex number
     uint16_t x; ///< X coordinate on the canvas
     uint16_t y; ///< Y coordinate on the canvas
 };
@@ -197,10 +195,9 @@ template <typename RealT>
 class MandelbrotRenderer;
 
 template <typename RealT = Fxp>
-class SlaveTask : public SRL::Types::ITask
+class SlaveTask : public ITask
 {
 public:
-
     /** @brief Constructor
      *
      * Initializes an empty task ready for parameters to be set.
@@ -219,7 +216,7 @@ public:
      * Copies the MandelbrotParameters into the task so the slave worker
      * can compute the iteration count for that pixel.
      */
-    void setMandelbrotRenderer(const MandelbrotParameters<RealT> & _params)
+    void setMandelbrotRenderer(const MandelbrotParameters<RealT> &_params)
     {
         params = _params;
     }
@@ -282,6 +279,7 @@ private:
     bool renderComplete = false;
 
     SlaveTask<RealT> task;
+
 public:
     /** @brief Construct a MandelbrotRenderer
      *
@@ -338,10 +336,8 @@ public:
         if (currentY >= Height)
         {
             currentY = 0;
-            // renderComplete = false;
         }
 
-        // for (; currentY < HEIGHT && !renderComplete; currentY++) {
         for (currentX = 0; currentX < Width; currentX++)
         {
             MandelbrotParameters<RealT> params{
@@ -350,24 +346,22 @@ public:
                 currentX,
                 currentY};
 
-                // If a previous slave result is available, use it
-                if (task.IsDone())
-                {
-                    canvas->SetPixel(task.getCurrentX(), task.getCurrentY(), task.getIteration() % 256);
-                }
+            // If a previous slave result is available, use it
+            if (task.IsDone())
+            {
+                canvas->SetPixel(task.getCurrentX(), task.getCurrentY(), task.getIteration() % 256);
+            }
 
-                // Send this work to the slave if possible (ExecuteOnSlave checks ResetTask)
-                task.setMandelbrotRenderer(params);
-                SRL::Slave::ExecuteOnSlave(task);
+            // Send this work to the slave if possible (ExecuteOnSlave checks ResetTask)
+            task.setMandelbrotRenderer(params);
+            SRL::Slave::ExecuteOnSlave(task);
 
-                // Also compute locally as a fallback so rendering proceeds immediately
-                uint16_t iteration = MandelbrotRenderer<RealT>::calculateMandelbrot(params);
-                canvas->SetPixel(currentX, currentY, iteration % 256);
+            // Also compute locally as a fallback so rendering proceeds immediately
+            uint16_t iteration = MandelbrotRenderer<RealT>::calculateMandelbrot(params);
+            canvas->SetPixel(currentX, currentY, iteration % 256);
         }
         currentX = 0;
         ++currentY;
-
-
 
         if (currentY >= Height)
         {
@@ -407,7 +401,6 @@ public:
      * @return true when all scanlines have been rendered
      */
     bool isComplete() const { return renderComplete; }
-
 
     /** @brief Calculate iteration count for a point in the complex plane
      *
