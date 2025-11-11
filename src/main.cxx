@@ -281,33 +281,24 @@ public:
                 currentX,
                 currentY};
 
-                if(!task.IsRunning())
+                // If a previous slave result is available, use it
+                if (task.IsDone())
                 {
-                    if (task.IsDone())
-                    {
-                        canvas->SetPixel(task.getCurrentX(), task.getCurrentY(), task.getIteration() % 256);
-                    }
+                    canvas->SetPixel(task.getCurrentX(), task.getCurrentY(), task.getIteration() % 256);
+                }
 
-                    task.setMandelbrotRenderer(params);
-                    SRL::Slave::ExecuteOnSlave(task);
-                }
-                else
-                {
-                    uint16_t iteration = MandelbrotRenderer<RealT>::calculateMandelbrot(params);
-                    canvas->SetPixel(currentX, currentY, iteration % 256);
-                }
+                // Send this work to the slave if possible (ExecuteOnSlave checks ResetTask)
+                task.setMandelbrotRenderer(params);
+                SRL::Slave::ExecuteOnSlave(task);
+
+                // Also compute locally as a fallback so rendering proceeds immediately
+                uint16_t iteration = MandelbrotRenderer<RealT>::calculateMandelbrot(params);
+                canvas->SetPixel(currentX, currentY, iteration % 256);
         }
         currentX = 0;
         ++currentY;
 
-        // If the slave is not finish, discard the result
-        if(task.IsRunning())
-        {
-            MandelbrotParameters<RealT> params = task.getMandelbrotRenderer();
-            uint16_t iteration = MandelbrotRenderer<RealT>::calculateMandelbrot(params);
 
-            canvas->SetPixel(params.x, params.y, iteration % 256);
-        }
 
         if (currentY >= Height)
         {
