@@ -67,3 +67,5 @@ g_renderer = new MandelbrotRenderer<float>();
 ```
 
 ![Alt text](pics/Mandelbrot_10_11_2025-20_34_44.png?raw=true "Kronos v2.7.0")
+
+![Alt text](pics/ScreencastFrom2025-11-1221-00-391-ezgif.com-optimize.gif?raw=true "Kronos v2.7.0")

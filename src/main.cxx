@@ -1,6 +1,7 @@
 #include <srl.hpp>
 #include <srl_log.hpp> // Logging system
 
+#include <algorithm>
 #include <cassert>
 
 // Using to shorten names for Vector and HighColor
@@ -130,11 +131,24 @@ public:
         }
     }
 
+    void RotatePalette(int32_t canvasTextureId)
+    {
+        SRL::CRAM::Palette palette(bitmap->ColorMode, SRL::VDP1::Metadata[canvasTextureId].PaletteId);
+        int16_t size = palette.GetSize();
+        SRL::Types::HighColor* data = palette.GetData();
+        
+        if (size <= 1 || data == nullptr)
+            return;
+
+        std::rotate(data, data + 1, data + size);
+    }
+
+
     /** @brief Get bitmap info for this canvas
      *
      * Returns a copy of the internal BitmapInfo object.
      */
-    SRL::Bitmap::BitmapInfo GetInfo() override
+    SRL::Bitmap::BitmapInfo GetInfo() const override
     {
         return *bitmap;
     }
@@ -394,7 +408,7 @@ public:
     void draw() const
     {
         SRL::Scene2D::DrawSprite(canvasTextureId, Vector3D(0.0, 0.0, 500.0));
-        Log::LogPrint<LogLevels::TESTING>("draw");
+        canvas->RotatePalette(canvasTextureId);
     }
 
     /** @brief Query whether the renderer finished the full image
@@ -475,6 +489,7 @@ int main()
             g_renderer->render();
         }
 
+        
         g_renderer->draw();
         SRL::Core::Synchronize();
     }
