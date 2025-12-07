@@ -60,3 +60,5 @@
 /[Cc]ompiler/**
 Compiler/
 imgui.ini
+cd/data/0.bin
+imgui.ini
