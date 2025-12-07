@@ -1,3 +1,3 @@
-:; "../../tools/scripts/run.sh" kronos; exit;
+:; "${SRL_INSTALL_ROOT:=../..}/tools/scripts/run.sh" kronos; exit;
 @ECHO Off
 "../../tools/scripts/run.bat" kronos
